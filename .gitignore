@@ -7,8 +7,11 @@
 /data/logs/*.log
 /data/sqlite/*.db
 /public/all.*
+/public/all-v*.*
 user.css
 /_bin/*.*
 /_docs/website/forum
 config.ini
 .project
+node_modules
+_wiki

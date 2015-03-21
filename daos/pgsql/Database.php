@@ -62,14 +62,29 @@ class Database {
                         starred     BOOLEAN NOT NULL,
                         source      INTEGER NOT NULL,
                         uid         TEXT NOT NULL,
-                        link        TEXT NOT NULL
+                        link        TEXT NOT NULL,
+                        updatetime  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        author      TEXT
                     );
                 ');
-                
                 \F3::get('db')->exec('
                     CREATE INDEX source ON items (
                         source
                     );
+                ');
+                \F3::get('db')->exec('
+                    CREATE OR REPLACE FUNCTION update_updatetime_procedure()
+                    RETURNS TRIGGER AS $$
+                        BEGIN
+                            NEW.updatetime = NOW();
+                            RETURN NEW;
+                        END;
+                    $$ LANGUAGE "plpgsql";
+                ');
+                \F3::get('db')->exec('
+                    CREATE TRIGGER update_updatetime_trigger
+                    BEFORE UPDATE ON items FOR EACH ROW EXECUTE PROCEDURE
+                    update_updatetime_procedure();
                 ');
             }
             
@@ -80,6 +95,7 @@ class Database {
                         id          SERIAL PRIMARY KEY,
                         title       TEXT NOT NULL,
                         tags        TEXT,
+                        filter      TEXT,
                         spout       TEXT NOT NULL,
                         params      TEXT NOT NULL,
                         error       TEXT,
@@ -98,7 +114,7 @@ class Database {
                 ');
                 
                 \F3::get('db')->exec('
-                    INSERT INTO version (version) VALUES (3);
+                    INSERT INTO version (version) VALUES (5);
                 ');
                 
                 \F3::get('db')->exec('
@@ -118,13 +134,52 @@ class Database {
                 $version = @\F3::get('db')->exec('SELECT version FROM version ORDER BY version DESC LIMIT 1');
                 $version = $version[0]['version'];
 
-                if($version == "2"){
+                if(strnatcmp($version, "3") < 0){
                     \F3::get('db')->exec('
                         ALTER TABLE sources ADD lastupdate INT;
                     ');
                     \F3::get('db')->exec('
                         INSERT INTO version (version) VALUES (3);
                     ');
+                }
+                if(strnatcmp($version, "4") < 0){
+                    \F3::get('db')->exec('
+                        ALTER TABLE items ADD updatetime TIMESTAMP WITH TIME ZONE;
+                    ');
+                    \F3::get('db')->exec('
+                        ALTER TABLE items ALTER COLUMN updatetime SET DEFAULT CURRENT_TIMESTAMP;
+                    ');
+                    \F3::get('db')->exec('
+                        CREATE OR REPLACE FUNCTION update_updatetime_procedure()
+                        RETURNS TRIGGER AS $$
+                            BEGIN
+                                NEW.updatetime = NOW();
+                                RETURN NEW;
+                            END;
+                        $$ LANGUAGE "plpgsql";
+                    ');
+                    \F3::get('db')->exec('
+                        CREATE TRIGGER update_updatetime_trigger
+                        BEFORE UPDATE ON items FOR EACH ROW EXECUTE PROCEDURE
+                        update_updatetime_procedure();
+                    ');
+                    \F3::get('db')->exec('
+                        INSERT INTO version (version) VALUES (4);
+                    ');
+                }
+                if(strnatcmp($version, "5") < 0){
+                    \F3::get('db')->exec('
+                        ALTER TABLE items ADD author TEXT;
+                    ');
+                    \F3::get('db')->exec('
+                        INSERT INTO version (version) VALUES (5);
+                    ');
+                }
+                if(strnatcmp($version, "6") < 0){
+                    \F3::get('db')->exec(array(
+                        'ALTER TABLE sources ADD filter TEXT;',
+                        'INSERT INTO version (version) VALUES (6);'
+                    ));
                 }
             }
             
@@ -150,6 +205,6 @@ class Database {
         $tables = array();
         foreach($result as $table)
             foreach($table as $key=>$value)
-                @\F3::get('db')->exec("VACUUM ANALYZE :table", array(':table' => $value));
+                @\F3::get('db')->exec("VACUUM ANALYZE " . $value);
     }
 }

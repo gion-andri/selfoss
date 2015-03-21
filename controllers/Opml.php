@@ -39,6 +39,8 @@ class Opml extends BaseController {
      *
      */
     public function show() {
+        $this->needsLoggedIn();
+
         $this->view = new \helpers\View();
         $this->view->msg = $this->msg;
         $this->view->msgclass = $this->msgclass;
@@ -53,6 +55,8 @@ class Opml extends BaseController {
      * @note Borrows from controllers/Sources.php:write
      */
     public function add() {
+        $this->needsLoggedIn();
+
         try {
             $opml = $_FILES['opml'];
             if ($opml['error'] == UPLOAD_ERR_NO_FILE) {
@@ -199,10 +203,15 @@ class Opml extends BaseController {
         if (array_key_exists($hash, $this->imported)) {
             $this->imported[$hash]['tags'] = array_unique(array_merge($this->imported[$hash]['tags'], $tags));
             $tags = implode(',', $this->imported[$hash]['tags']);
-            $this->sourcesDao->edit($this->imported[$hash]['id'], $title, $tags, $spout, $data);
+            $this->sourcesDao->edit($this->imported[$hash]['id'], $title, $tags, '', $spout, $data);
             \F3::get('logger')->log('  OPML import: updated tags for      "' . $title . '"', \DEBUG);
+        } elseif ($id = $this->sourcesDao->checkIfExists($title, $spout, $data)) {
+            $tags = array_unique(array_merge($this->sourcesDao->getTags($id), $tags));
+            $this->sourcesDao->edit($id, $title, implode(',', $tags), '', $spout, $data);
+            $this->imported[$hash] = Array('id' => $id, 'tags' => $tags);
+            \F3::get('logger')->log('  OPML import: updated tags for  "' . $title . '"', \DEBUG);
         } else {
-            $id = $this->sourcesDao->add($title, implode(',', $tags), $spout, $data);
+            $id = $this->sourcesDao->add($title, implode(',', $tags), '', $spout, $data);
             $this->imported[$hash] = Array('id' => $id, 'tags' => $tags);
             \F3::get('logger')->log('  OPML import: successfully imported "' . $title . '"', \DEBUG);
         }
@@ -242,6 +251,7 @@ class Opml extends BaseController {
         $this->writer->writeAttributeNS('selfoss', 'params', null, html_entity_decode($source['params']));
 
         $this->writer->endElement();  // outline
+        \F3::get('logger')->log("done exporting source ".$source['title'], \DEBUG);
     }
 
 
@@ -251,9 +261,12 @@ class Opml extends BaseController {
      * @note Uses the selfoss namespace to store selfoss-specific information
      */
     public function export() {
+        $this->needsLoggedIn();
+
         $this->sourcesDao = new \daos\Sources();
         $this->tagsDao = new \daos\Tags();
 
+        \F3::get('logger')->log('start OPML export', \DEBUG);
         $this->writer = new \XMLWriter();
         $this->writer->openMemory();
         $this->writer->setIndent(1);
@@ -271,11 +284,13 @@ class Opml extends BaseController {
         $this->writer->writeAttribute('version', '1.0');
         $this->writer->writeAttribute('createdOn', date('r'));
         $this->writer->endElement();  // meta
+        \F3::get('logger')->log('OPML export: finished writing meta', \DEBUG);
 
         $this->writer->startElement('head');
         $user = \F3::get('username');
         $this->writer->writeElement('title', ($user?$user.'\'s':'My') . ' subscriptions in selfoss');
         $this->writer->endElement();  // head
+        \F3::get('logger')->log('OPML export: finished writing head', \DEBUG);
 
         $this->writer->startElement('body');
 
@@ -293,11 +308,13 @@ class Opml extends BaseController {
         // create associative array with tag names as keys, colors as values
         $tagColors = array();
         foreach ($this->tagsDao->get() as $key => $tag) {
+            \F3::get('logger')->log("OPML export: tag ".$tag['tag']." has color ".$tag['color'], \DEBUG);
             $tagColors[$tag['tag']] = $tag['color'];
         }
 
         // generate outline elements for all sources
         foreach ($sources['tagged'] as $tag => $children) {
+            \F3::get('logger')->log("OPML export: exporting tag $tag sources", \DEBUG);
             $this->writer->startElement('outline');
             $this->writer->writeAttribute('title', $tag);
             $this->writer->writeAttribute('text', $tag);
@@ -310,6 +327,8 @@ class Opml extends BaseController {
 
             $this->writer->endElement();  // outline
         }
+
+        \F3::get('logger')->log("OPML export: exporting untagged sources", \DEBUG);
         foreach ($sources['untagged'] as $key => $source) {
             $this->writeSource($source);
         }
@@ -317,9 +336,10 @@ class Opml extends BaseController {
         $this->writer->endElement();  // body
 
         $this->writer->endDocument();
+        \F3::get('logger')->log('finished OPML export', \DEBUG);
 
         // save content as file and suggest file name
-        header('Content-Disposition: attachment; filename="selfoss-subscriptions.opml"');
+        header('Content-Disposition: attachment; filename="selfoss-subscriptions.xml"');
         header('Content-Type: text/xml; charset=UTF-8');
         echo $this->writer->outputMemory();
     }

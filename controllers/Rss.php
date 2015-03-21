@@ -18,7 +18,9 @@ class Rss extends BaseController {
      * @return void
      */
     public function rss() {
-        $feedWriter = new \FeedWriter(\RSS2);
+        $this->needsLoggedInOrPublicMode();
+
+        $feedWriter = new \RSS2FeedWriter();
         $feedWriter->setTitle(\F3::get('rss_title'));
         
         $feedWriter->setLink($this->view->base);
@@ -59,7 +61,7 @@ class Rss extends BaseController {
                 }  
             }
 
-            $newItem->setTitle(str_replace('&', '&amp;', html_entity_decode(utf8_decode($item['title'] . " (" . $lastSourceName . ")"))));
+            $newItem->setTitle(str_replace('&', '&amp;', $this->UTF8entities($item['title'] . " (" . $lastSourceName . ")")));
             @$newItem->setLink($item['link']);
             $newItem->setDate($item['datetime']);
             $newItem->setDescription(str_replace('&#34;', '"', $item['content']));
@@ -85,7 +87,52 @@ class Rss extends BaseController {
         $feedWriter->setChannelElement('updated', $newestEntryDate);
 
         
-        $feedWriter->genarateFeed();
+        $feedWriter->generateFeed();
+    }
+
+    private function UTF8entities($content="") { 
+        $contents = $this->unicode_string_to_array($content);
+        $swap = "";
+        $iCount = count($contents);
+        for ($o=0;$o<$iCount;$o++) {
+            $contents[$o] = $this->unicode_entity_replace($contents[$o]);
+            $swap .= $contents[$o];
+        }
+        return html_entity_decode($swap, ENT_NOQUOTES, 'UTF-8'); //convert HTML-entities like &#8211; to UTF-8
+        
+    }
+
+    private function unicode_string_to_array( $string ) { //adjwilli
+        $strlen = mb_strlen($string);
+        while ($strlen) {
+            $array[] = mb_substr( $string, 0, 1, "UTF-8" );
+            $string = mb_substr( $string, 1, $strlen, "UTF-8" );
+            $strlen = mb_strlen( $string );
+        }
+        return $array;
+    }
+
+    private function unicode_entity_replace($c) { //m. perez 
+        $h = ord($c{0});    
+        if ($h <= 0x7F) { 
+            return $c;
+        } else if ($h < 0xC2) { 
+            return $c;
+        }
+        
+        if ($h <= 0xDF) {
+            $h = ($h & 0x1F) << 6 | (ord($c{1}) & 0x3F);
+            $h = "&#" . $h . ";";
+            return $h; 
+        } else if ($h <= 0xEF) {
+            $h = ($h & 0x0F) << 12 | (ord($c{1}) & 0x3F) << 6 | (ord($c{2}) & 0x3F);
+            $h = "&#" . $h . ";";
+            return $h;
+        } else if ($h <= 0xF4) {
+            $h = ($h & 0x0F) << 18 | (ord($c{1}) & 0x3F) << 12 | (ord($c{2}) & 0x3F) << 6 | (ord($c{3}) & 0x3F);
+            $h = "&#" . $h . ";";
+            return $h;
+        }
     }
     
 }

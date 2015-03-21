@@ -25,6 +25,22 @@ selfoss.events.entriesToolbar = function(parent) {
         e.preventDefault();
         return false;
     });
+
+    // next item on smartphone
+    parent.find('.entry-toolbar .entry-next').unbind('click').click(function(e) {
+        selfoss.shortcuts.nextprev('next', true);
+        return false;
+    });
+    
+    // next item on tablet
+    parent.find('.entry-smartphone-share .entry-next').unbind('click').click(function(e) {
+        var $selected = $('.entry.selected, .entry.fullscreen:visible');
+        var id = $selected.attr('id').replace('entrr', 'entry');
+        $selected.find('.entry-unread.active').click();
+        $selected.find('.entry-title').click();
+        $("#" + id).next('.entry').find('.entry-title').click();
+        return false;
+    });
     
     // share with google plus
     parent.find('.entry-sharegoogle').unbind('click').click(function(e) {
@@ -66,6 +82,13 @@ selfoss.events.entriesToolbar = function(parent) {
     // share with readability
     parent.find('.entry-sharereadability').unbind('click').click(function(e) {
         window.open(" http://www.readability.com/save?url="+encodeURIComponent($(this).parents(".entry").children(".entry-link").eq(0).attr("href")));
+        e.preventDefault();
+        return false;
+    });
+
+    // share with wallabag
+    parent.find('.entry-sharewallabag').unbind('click').click(function(e) {
+        window.open($('#config').data('wallabag')+'/?action=add&url='+btoa($(this).parents(".entry").children(".entry-link").eq(0).attr("href")));
         e.preventDefault();
         return false;
     });
@@ -117,7 +140,8 @@ selfoss.events.entriesToolbar = function(parent) {
                     // rollback ui changes
                     setButton(!starr);
                     updateStats(!starr);
-                    alert('Can not starr/unstarr item: '+errorThrown);
+                    selfoss.showError('Can not star/unstar item: '+
+                                      textStatus+' '+errorThrown);
                 }
             });
             
@@ -197,6 +221,7 @@ selfoss.events.entriesToolbar = function(parent) {
                         tagsCountEl.html('');
                     
                 } );
+                selfoss.setUnreadCount(unreadstats);
             };
             updateStats(unread);
             
@@ -208,7 +233,8 @@ selfoss.events.entriesToolbar = function(parent) {
                     // rollback ui changes
                     updateStats(!unread);
                     setButton(!unread);
-                    alert('Can not mark/unmark item: '+errorThrown);
+                    selfoss.showError('Can not mark/unmark item: '+
+                                      textStatus+' '+errorThrown);
                 }
             });
             

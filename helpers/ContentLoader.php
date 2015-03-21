@@ -58,6 +58,11 @@ class ContentLoader {
      */
     public function fetch($source) {
         
+        // at least 20 seconds wait until next update of a given source
+        $this->updateSource($source);
+        if(time() - $source['lastupdate'] < 20)
+            return;
+        
         @set_time_limit(5000);
         @error_reporting(E_ERROR);
         
@@ -94,11 +99,19 @@ class ContentLoader {
         // insert new items in database
         \F3::get('logger')->log('start item fetching', \DEBUG);
 
+        $itemsInFeed = array();
+        foreach ($spout as $item) {
+            $itemsInFeed[] = $item->getId();
+        }
+        $itemsFound = $this->itemsDao->findAll($itemsInFeed);
+
+
         $lasticon = false;
         foreach ($spout as $item) {
             // item already in database?
-            if($this->itemsDao->exists($item->getId())===true)
+            if (isset($itemsFound[$item->getId()])) {
                 continue;
+            }
             
             // test date: continue with next if item too old
             $itemDate = new \DateTime($item->getDate());
@@ -115,18 +128,44 @@ class ContentLoader {
             // insert new item
             \F3::get('logger')->log('start insertion of new item "'.$item->getTitle().'"', \DEBUG);
             
-            // sanitize content html
-            $content = $this->sanitizeContent($item->getContent());
+            $content = "";
+            try {
+                // fetch content
+                $content = $item->getContent();
+                
+                // sanitize content html
+                $content = $this->sanitizeContent($content);
+            } catch(\exception $e) {
+                $content = 'Error: Content not fetched. Reason: ' . $e->getMessage();
+                \F3::get('logger')->log('Can not fetch "'.$item->getTitle().'" : ' . $e->getMessage(), \ERROR);
+            }
 
             // sanitize title
-            $title = htmlspecialchars_decode($item->getTitle());
-            $title = htmLawed($title, array("deny_attribute" => "*", "elements" => "-*"));
+            $title = $this->sanitizeField($item->getTitle());
             if(strlen(trim($title))==0)
                 $title = "[" . \F3::get('lang_no_title') . "]";
 
+            // Check sanatized title against filter
+            try {
+                if($this->filter($source, $title,$content)===false)
+                    continue;
+            } catch(Exception $e) {
+                $messagesModel->add($feed, 'filter error');
+                continue;
+            }
+
+
+            // sanitize author
+            $author = $this->sanitizeField($item->getAuthor());
+
             \F3::get('logger')->log('item content sanitized', \DEBUG);
 
-            $icon = $item->getIcon();
+            try {
+                $icon = $item->getIcon();
+            } catch(\exception $e) {
+                return;
+            }
+
             $newItem = array(
                     'title'        => $title,
                     'content'      => $content,
@@ -135,7 +174,8 @@ class ContentLoader {
                     'uid'          => $item->getId(),
                     'thumbnail'    => $item->getThumbnail(),
                     'icon'         => $icon!==false ? $icon : "",
-                    'link'         => htmLawed($item->getLink(), array("deny_attribute" => "*", "elements" => "-*"))
+                    'link'         => htmLawed($item->getLink(), array("deny_attribute" => "*", "elements" => "-*")),
+                    'author'       => $author
             );
             
             // save thumbnail
@@ -160,6 +200,26 @@ class ContentLoader {
         $this->updateSource($source);
     }
 
+    /**
+     * Check if a new item matches the filter
+     *
+     * @param $feed object and new item to add
+     * @return boolean indicating filter success
+     */
+    protected function filter($source, $title,$content) {
+        if(strlen(trim($source['filter']))!=0) {
+            $resultTitle = @preg_match($source['filter'], $title);
+            $resultContent = @preg_match($source['filter'], $content);
+            if($resultTitle===false || $resultContent===false) {
+                \F3::get('logger')->log('filter error: ' . $source->fiter, \ERROR);
+                throw new Exception();
+            }
+            // test filter
+            if($resultTitle==0 && $resultContent==0)
+                return false;
+        }
+        return true;
+    }
 
     /**
      * Sanitize content for preventing XSS attacks.
@@ -169,18 +229,33 @@ class ContentLoader {
      */
     protected function sanitizeContent($content) {
         return htmLawed(
-            htmlspecialchars_decode($content),
+            $content,
             array(
                 "safe"           => 1,
-                "deny_attribute" => '* -alt -title -src -href',
+                "deny_attribute" => '* -alt -title -src -href -target -width -height, img +width +height',
                 "keep_bad"       => 0,
                 "comment"        => 1,
                 "cdata"          => 1,
-                "elements"       => 'div,p,ul,li,a,img,dl,dt,h1,h2,h3,h4,h5,h6,ol,br,table,tr,td,blockquote,pre,ins,del,th,thead,tbody,b,i,strong,em,tt'
+                "elements"       => 'div,p,ul,li,a,img,dl,dt,dd,h1,h2,h3,h4,h5,h6,ol,br,table,tr,td,blockquote,pre,ins,del,th,thead,tbody,b,i,strong,em,tt,sub,sup,s,code'
             )
         );
     }
 
+    /**
+     * Sanitize a simple field
+     *
+     * @param $value content of the given field
+     * @return mixed|string sanitized content
+     */
+    protected function sanitizeField($value) {
+        return htmLawed(
+            htmlspecialchars_decode($value),
+            array(
+                "deny_attribute" => '* -href -title',
+                "elements"       => 'a,br,ins,del,b,i,strong,em,tt,sub,sup,s,code'
+            )
+        );
+    }
 
     /**
      * Fetch the thumbanil of a given item
@@ -192,7 +267,7 @@ class ContentLoader {
     protected function fetchThumbnail($thumbnail, $newItem) {
         if (strlen(trim($thumbnail)) > 0) {
             $imageHelper = new \helpers\Image();
-            $thumbnailAsPng = $imageHelper->loadImage($thumbnail, 150, 150);
+            $thumbnailAsPng = $imageHelper->loadImage($thumbnail, 500, 500);
             if ($thumbnailAsPng !== false) {
                 file_put_contents(
                     'data/thumbnails/' . md5($thumbnail) . '.png',
@@ -225,7 +300,7 @@ class ContentLoader {
                 $newItem['icon'] = md5($lasticon) . '.png';
             } else {
                 $imageHelper = new \helpers\Image();
-                $iconAsPng = $imageHelper->loadImage($icon, 30, 30);
+                $iconAsPng = $imageHelper->loadImage($icon, 30, null);
                 if($iconAsPng!==false) {
                     file_put_contents(
                         'data/favicons/' . md5($icon) . '.png',
@@ -307,7 +382,7 @@ class ContentLoader {
      */
     protected function updateSource($source) {
         // remove previous error
-        if (strlen(trim($source['error'])) != 0) {
+        if ( !is_null($source['error']) ) {
             $this->sourceDao->error($source['id'], '');
         }
         // save last update
